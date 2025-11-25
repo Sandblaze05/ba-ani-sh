@@ -111,13 +111,14 @@ const handleSelection = () => {
 
                     rl.question(chalk.cyan('Enter preferred player (mpv/vlc) [default: mpv]: '), (player) => {
                         rl.close();
+                        console.clear();
                         const selectedPlayer = player.trim() || 'mpv';
 
                         console.log(chalk.yellow(`\nInitializing WebTorrent engine...`));
 
                         const client = new WebTorrent();
 
-                        client.add(magnetLink, (torrent) => {
+                        client.add(magnetLink, { path: 'temp' }, (torrent) => {
                             // Find the largest file (usually the video)
                             const file = torrent.files.find(f => f.name.endsWith('.mp4') || f.name.endsWith('.mkv') || f.name.endsWith('.avi'));
 
@@ -137,7 +138,9 @@ const handleSelection = () => {
                                 if (!range) {
                                     res.setHeader('Content-Length', file.length);
                                     res.setHeader('Content-Type', 'video/mp4');
-                                    file.createReadStream().pipe(res);
+                                    const stream = file.createReadStream();
+                                    stream.pipe(res);
+                                    stream.on('error', () => {});
                                     return;
                                 }
 
@@ -153,15 +156,24 @@ const handleSelection = () => {
                                     'Content-Type': 'video/mp4',
                                 });
 
-                                file.createReadStream({ start, end }).pipe(res);
+                                const stream = file.createReadStream({ start, end });
+                                stream.pipe(res);
+                                stream.on('error', () => {});
                             });
 
                             server.listen(0, () => {
                                 const port = server.address().port;
-                                const url = `http://localhost:${port}/${0}`;
+                                const url = `http://localhost:${port}/`;
 
                                 console.log(chalk.green(`Streaming from: ${url}`));
                                 console.log(chalk.yellow(`Launching ${selectedPlayer}...`));
+
+                                const args = [url];
+                                if (selectedPlayer === 'mpv') {
+                                    args.push(`--title="${file.name}"`);
+                                } else if (selectedPlayer === 'vlc') {
+                                    args.push(`--meta-title=${file.name}`);
+                                }
 
                                 // Spawn the player pointing to the local HTTP URL
                                 const playerProc = spawn(selectedPlayer, [url], {
