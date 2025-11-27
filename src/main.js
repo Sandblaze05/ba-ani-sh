@@ -4,6 +4,7 @@ import readline from 'readline';
 import { spawn } from 'child_process';
 import WebTorrent from 'webtorrent';
 import http from 'http';
+import LRUCacheStore from './cacheStore.js';
 
 readline.emitKeypressEvents(process.stdin);
 if (process.stdin.isTTY) {
@@ -81,7 +82,7 @@ const spinnerAnimation = () => {
 const browseScreen = () => {
     console.clear();
 
-    console.log(chalk.hex('#3884ffff').bold(asciiArt));
+    console.log(chalk.hex('#3884ffff').bold(browseHeader));
     console.log();
 
     browseItems.forEach((item, index) => {
@@ -160,7 +161,7 @@ const startTorrentStream = () => {
 
                 const client = new WebTorrent();
 
-                client.add(magnetLink, { path: 'temp' }, (torrent) => {
+                client.add(magnetLink, { path: 'temp', store: LRUCacheStore }, (torrent) => {
                     clearInterval(spin);
                     process.stdout.write('\r' + ' '.repeat(50) + '\r');
 

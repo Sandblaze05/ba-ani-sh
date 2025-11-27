@@ -1,19 +1,33 @@
 {
   "name": "ba-ani-sh",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "A terminal-based anime streaming application using torrents",
+  "main": "src/main.js",
+  "bin": {
+    "ba-ani-sh": "./src/main.js"
+  },
   "scripts": {
+    "start": "node src/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "anime",
+    "torrent",
+    "streaming",
+    "cli",
+    "terminal",
+    "webtorrent"
+  ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "module",
+  "files": [
+    "src/"
+  ],
   "dependencies": {
-    "blessed": "^0.1.81",
     "chalk": "^5.6.2",
     "cheerio": "^1.1.2",
+    "fs-chunk-store": "^5.0.0",
     "webtorrent": "^2.8.4"
   }
 }
