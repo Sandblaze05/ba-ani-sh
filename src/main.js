@@ -11,8 +11,13 @@ if (process.stdin.isTTY) {
 }
 
 const asciiArt = fs.readFileSync('src/ascii.txt', 'utf-8');
+const watchHeader = fs.readFileSync('src/watchHeader.txt', 'utf-8');
+const browseHeader = fs.readFileSync('src/browseHeader.txt', 'utf-8');
 
 const menuItems = ['Browse', 'Watch'];
+const browseItems = ['Go back', 'Query'];
+const watchItems = ['Go back', 'Enter Magnet Link'];
+
 let curMenu = 'default';
 let selectedIndex = 0;
 
@@ -41,7 +46,37 @@ const render = () => {
     console.log(chalk.gray('Use ↑/↓ or j/k to navigate, Enter to select, q/Esc to quit'));
 }
 
-const browseItems = ['Go back', 'Query'];
+const drawBox = (lines, color = '#00FFFF') => {
+    lines = lines.map(String);
+
+    const stripAnsi = str => str.replace(/\x1B\[[0-9;]*m/g, '');
+    const maxLen = Math.max(...lines.map(l => stripAnsi(l).length));
+
+    const top = `┌${'─'.repeat(maxLen + 2)}┐`;
+    const bottom = `└${'─'.repeat(maxLen + 2)}┘`;
+
+    let out = chalk.hex(color)(top) + "\n";
+
+    for (const line of lines) {
+        const visibleLen = stripAnsi(line).length;
+        const padding = ' '.repeat(maxLen - visibleLen);
+        out += chalk.hex(color)("│ ") + line + padding + chalk.hex(color)(" │") + "\n";
+    }
+
+    out += chalk.hex(color)(bottom);
+
+    return out;
+}
+
+const spinnerAnimation = () => {
+    const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let i = 0;
+    const spinnerInterval = setInterval(() => {
+        process.stdout.write('\r' + chalk.hex('#FF69B4')(spinner[i]) + ' ' + chalk.dim('Connecting to peers...'));
+        i = (i + 1) % spinner.length;
+    }, 80);
+    return spinnerInterval;
+}
 
 const browseScreen = () => {
     console.clear();
@@ -60,6 +95,190 @@ const browseScreen = () => {
             }
         }
     });
+
+    console.log();
+    console.log(chalk.gray('Use ↑/↓ or j/k to navigate, Enter to select, q/Esc to quit'));
+}
+
+const watchScreen = () => {
+    console.clear();
+
+    console.log(chalk.blue.bold(watchHeader));
+    console.log();
+
+    watchItems.forEach((item, index) => {
+        if (index === selectedIndex) {
+            console.log('> ' + chalk.hex('#db68adff').bold.underline(item));
+        } else {
+            if (item === 'Go back') {
+                console.log('  ' + chalk.red(item));
+            } else if (item === 'Enter Magnet Link') {
+                console.log('  ' + chalk.cyan(item));
+            } else {
+                console.log('  ' + chalk.white(item));
+            }
+        }
+    });
+
+    console.log();
+    console.log(chalk.gray('Use ↑/↓ or j/k to navigate, Enter to select, q/Esc to quit'));
+}
+
+const startTorrentStream = () => {
+    curMenu = 'watch-input';
+
+    // Disable raw mode to allow input
+    if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+    }
+
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    const magnetPrompt = chalk.hex('#00FFFF')('┌─') +
+        chalk.hex('#00E5E5')('[') +
+        chalk.hex('#00CCCC')(' Magnet Link ') +
+        chalk.hex('#00E5E5')(']') +
+        '\n' +
+        chalk.hex('#00FFFF')('└─> ');
+
+    rl.question(magnetPrompt, (magnetLink) => {
+        if (magnetLink.trim()) {
+            console.log(chalk.greenBright(`\n✓ Magnet link received: ${magnetLink.substring(0, 50)}...`));
+
+            rl.question(chalk.cyan('Enter preferred player (mpv/vlc) [default: mpv]: '), (player) => {
+                rl.close();
+                const selectedPlayer = player.trim() || 'mpv';
+
+                console.log();
+                console.log(chalk.hex('#FFD700')('Initializing WebTorrent Engine...'));
+                console.log();
+
+                const spin = spinnerAnimation();
+
+                const client = new WebTorrent();
+
+                client.add(magnetLink, { path: 'temp' }, (torrent) => {
+                    clearInterval(spin);
+                    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+
+                    const file = torrent.files.find(f => f.name.endsWith('.mp4') || f.name.endsWith('.mkv') || f.name.endsWith('.avi'));
+
+                    if (!file) {
+                        console.log(chalk.red('No video file found in torrent.'));
+                        client.destroy();
+                        returnToMenu();
+                        return;
+                    }
+
+                    console.log(chalk.hex('#00FF00')('✓ ') + chalk.hex('#00E500')('Connected to swarm'));
+                    console.log();
+                    const box = drawBox([
+                        chalk.bold("File: ") + chalk.white(file.name),
+                        chalk.bold("Size: ") + chalk.white((file.length / (1024 * 1024)).toFixed(2) + " MB"),
+                        chalk.bold("Player: ") + chalk.white(selectedPlayer.toUpperCase()),
+                    ]);
+                    console.log(box);
+                    console.log();
+                    console.log(chalk.hex('#ffd700')(`Starting local server...`));
+
+                    const server = http.createServer((req, res) => {
+                        const range = req.headers.range;
+
+                        if (!range) {
+                            res.setHeader('Content-Length', file.length);
+                            res.setHeader('Content-Type', 'video/mp4');
+                            const stream = file.createReadStream();
+                            stream.pipe(res);
+                            stream.on('error', () => { });
+                            return;
+                        }
+
+                        const parts = range.replace(/bytes=/, "").split("-");
+                        const start = parseInt(parts[0], 10);
+                        const end = parts[1] ? parseInt(parts[1], 10) : file.length - 1;
+                        const chunksize = (end - start) + 1;
+
+                        res.writeHead(206, {
+                            'Content-Range': `bytes ${start}-${end}/${file.length}`,
+                            'Accept-Ranges': 'bytes',
+                            'Content-Length': chunksize,
+                            'Content-Type': 'video/mp4',
+                        });
+
+                        const stream = file.createReadStream({ start, end });
+                        stream.pipe(res);
+                        stream.on('error', () => { });
+                    });
+
+                    server.listen(0, () => {
+                        const port = server.address().port;
+                        const url = `http://localhost:${port}/`;
+
+                        console.log(chalk.hex('#00FF00')('✓ ') + chalk.hex('#00E500')('Server running at ') + chalk.underline(url));
+                        console.log(chalk.hex('#FFD700')('▶  Launching ' + selectedPlayer + '...'));
+
+                        const playerProc = spawn(selectedPlayer, [url], {
+                            stdio: 'ignore',
+                            detached: false
+                        });
+
+                        playerProc.on('close', (code) => {
+                            console.log(chalk.dim('Player closed'));
+                            server.close();
+                            client.destroy();
+                            returnToMenu();
+                        });
+                    });
+
+                    let lastProgress = 0;
+                    torrent.on('download', (bytes) => {
+                        const progress = (torrent.progress * 100).toFixed(1);
+                        if (progress - lastProgress >= 1) {
+                            lastProgress = progress;
+                            const downloadSpeed = (torrent.downloadSpeed / (1024 * 1024)).toFixed(2);
+                            const downloaded = (torrent.downloaded / (1024 * 1024)).toFixed(2);
+                            const total = (torrent.length / (1024 * 1024)).toFixed(2);
+
+                            const barLength = 30;
+                            const filled = Math.floor((progress / 100) * barLength);
+                            const empty = barLength - filled;
+                            const bar = chalk.hex('#00FF00')('█').repeat(filled) +
+                                chalk.dim('░').repeat(empty);
+
+                            process.stdout.write(
+                                '\r' +
+                                chalk.hex('#00FFFF')('Progress: ') +
+                                bar + ' ' +
+                                chalk.bold(progress + '%') + ' ' +
+                                chalk.dim(`(${downloaded}/${total} MB)`) + ' ' +
+                                chalk.hex('#FFD700')(`↓ ${downloadSpeed} MB/s`) +
+                                ' '.repeat(5)
+                            );
+                        }
+                    });
+                });
+            });
+        } else {
+            rl.close();
+            console.log(chalk.red('\n✗') + chalk.dim(' No magnet link provided'));
+            returnToMenu();
+        }
+    });
+}
+
+const returnToMenu = () => {
+    setTimeout(() => {
+        curMenu = 'default';
+        selectedIndex = 0;
+        if (process.stdin.isTTY) {
+            process.stdin.setRawMode(true);
+            process.stdin.resume();
+        }
+        render();
+    }, 1000);
 }
 
 const handleSelection = () => {
@@ -76,9 +295,16 @@ const handleSelection = () => {
             console.log('Opening query...');
         }
     } else if (curMenu === 'watch') {
-        curMenu = 'default';
-        selectedIndex = 0;
-        render();
+        const selected = watchItems[selectedIndex];
+
+        if (selected === 'Go back') {
+            curMenu = 'default';
+            selectedIndex = 0;
+            render();
+        } else if (selected === 'Enter Magnet Link') {
+            console.clear();
+            startTorrentStream();
+        }
     } else {
         const selected = menuItems[selectedIndex];
 
@@ -87,155 +313,18 @@ const handleSelection = () => {
             selectedIndex = 0;
             browseScreen();
         } else if (selected === 'Watch') {
-            console.log();
-            console.log(chalk.blue.bold('\n ▶ Watch Anime\n'));
-            // console.log(chalk.cyanBright('Enter magnet link: '));
-            console.log();
-
             curMenu = 'watch';
-
-            // Disable raw mode to allow input
-            if (process.stdin.isTTY) {
-                process.stdin.setRawMode(false);
-            }
-
-            const rl = readline.createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
-
-            rl.question(chalk.cyanBright('Enter magnet link: '), (magnetLink) => {
-
-                if (magnetLink.trim()) {
-                    console.log(chalk.greenBright(`\n✓ Magnet link received: ${magnetLink.substring(0, 50)}...`));
-
-                    rl.question(chalk.cyan('Enter preferred player (mpv/vlc) [default: mpv]: '), (player) => {
-                        rl.close();
-                        console.clear();
-                        const selectedPlayer = player.trim() || 'mpv';
-
-                        console.log(chalk.yellow(`\nInitializing WebTorrent engine...`));
-
-                        const client = new WebTorrent();
-
-                        client.add(magnetLink, { path: 'temp' }, (torrent) => {
-                            // Find the largest file (usually the video)
-                            const file = torrent.files.find(f => f.name.endsWith('.mp4') || f.name.endsWith('.mkv') || f.name.endsWith('.avi'));
-
-                            if (!file) {
-                                console.log(chalk.red('No video file found in torrent.'));
-                                client.destroy();
-                                return;
-                            }
-
-                            console.log(chalk.green(`\nFound: ${file.name}`));
-                            console.log(chalk.yellow(`Starting local server...`));
-
-                            // Create a local streaming server
-                            const server = http.createServer((req, res) => {
-                                const range = req.headers.range;
-
-                                if (!range) {
-                                    res.setHeader('Content-Length', file.length);
-                                    res.setHeader('Content-Type', 'video/mp4');
-                                    const stream = file.createReadStream();
-                                    stream.pipe(res);
-                                    stream.on('error', () => {});
-                                    return;
-                                }
-
-                                const parts = range.replace(/bytes=/, "").split("-");
-                                const start = parseInt(parts[0], 10);
-                                const end = parts[1] ? parseInt(parts[1], 10) : file.length - 1;
-                                const chunksize = (end - start) + 1;
-
-                                res.writeHead(206, {
-                                    'Content-Range': `bytes ${start}-${end}/${file.length}`,
-                                    'Accept-Ranges': 'bytes',
-                                    'Content-Length': chunksize,
-                                    'Content-Type': 'video/mp4',
-                                });
-
-                                const stream = file.createReadStream({ start, end });
-                                stream.pipe(res);
-                                stream.on('error', () => {});
-                            });
-
-                            server.listen(0, () => {
-                                const port = server.address().port;
-                                const url = `http://localhost:${port}/`;
-
-                                console.log(chalk.green(`Streaming from: ${url}`));
-                                console.log(chalk.yellow(`Launching ${selectedPlayer}...`));
-
-                                const args = [url];
-                                if (selectedPlayer === 'mpv') {
-                                    args.push(`--title="${file.name}"`);
-                                } else if (selectedPlayer === 'vlc') {
-                                    args.push(`--meta-title=${file.name}`);
-                                }
-
-                                // Spawn the player pointing to the local HTTP URL
-                                const playerProc = spawn(selectedPlayer, [url], {
-                                    stdio: 'ignore',
-                                    detached: false
-                                });
-
-                                playerProc.on('close', (code) => {
-                                    console.log(chalk.gray(`Player closed.`));
-                                    server.close();
-                                    client.destroy();
-
-                                    // Return to menu logic here
-                                    setTimeout(() => {
-                                        curMenu = 'default';
-                                        selectedIndex = 0;
-                                        if (process.stdin.isTTY) {
-                                            process.stdin.setRawMode(true);
-                                            process.stdin.resume();
-                                        }
-                                        render();
-                                    }, 1000);
-                                });
-                            });
-
-                            torrent.on('download', (bytes) => {
-
-                            });
-                        });
-                    })
-
-
-                } else {
-                    rl.close();
-                    console.log(chalk.red('\n✗ No magnet link provided'));
-
-                    setTimeout(() => {
-                        curMenu = 'default';
-                        selectedIndex = 0;
-                        // enable raw mode again
-                        if (process.stdin.isTTY) {
-                            process.stdin.setRawMode(true);
-                            process.stdin.resume();
-                        }
-                        render();
-                    }, 1000);
-                }
-            });
-
-            curMenu = 'watch';
+            selectedIndex = 0;
+            watchScreen();
         }
     }
 }
 
-
-
 // Handle keypresses
 process.stdin.on('keypress', (str, key) => {
-    // console.log('DEBUG: keypress received', key?.name, 'curMenu:', curMenu);
     if (!key) return;
 
-    if (curMenu === 'watch') return;
+    if (curMenu === 'watch-input') return;
 
     if (key.name === 'escape' || key.name === 'q' || (key.ctrl && key.name === 'c')) {
         process.exit(0);
@@ -248,6 +337,10 @@ process.stdin.on('keypress', (str, key) => {
                 selectedIndex = (selectedIndex - 1 + browseItems.length) % browseItems.length;
                 browseScreen();
                 break;
+            case 'watch':
+                selectedIndex = (selectedIndex - 1 + watchItems.length) % watchItems.length;
+                watchScreen();
+                break;
             case 'default':
                 selectedIndex = (selectedIndex - 1 + menuItems.length) % menuItems.length;
                 render();
@@ -259,6 +352,10 @@ process.stdin.on('keypress', (str, key) => {
                 selectedIndex = (selectedIndex + 1) % browseItems.length;
                 browseScreen();
                 break;
+            case 'watch':
+                selectedIndex = (selectedIndex + 1) % watchItems.length;
+                watchScreen();
+                break;
             case 'default':
                 selectedIndex = (selectedIndex + 1) % menuItems.length;
                 render();
@@ -268,10 +365,5 @@ process.stdin.on('keypress', (str, key) => {
         handleSelection();
     }
 });
-
-// process.on('SIGINT', () => {
-//     console.warn('sigint');
-// })
-
 
 render();

@@ -3,13 +3,7 @@ import fs from 'fs';
 
 const url = 'https://animetosho.org/';
 
-const getRecentAdded = async () => {
-    const response = await fetch(url);
-    if (!response.ok) {
-        console.debug('Failed to scrape');
-    }
-
-    const html = await response.text();
+const parseHtml = (html) => {
     const $ = cheerio.load(html);
 
     const results = [];
@@ -39,10 +33,33 @@ const getRecentAdded = async () => {
         }
     });
     
-    fs.writeFile('test.json', JSON.stringify(results, null , 2), (err) => {});
-    // console.log(data);
+    const output = {
+        meta: {
+            parseEntries: results.length,
+            date: new Date().toISOString(),
+        },
+        entries: results,
+    };
 
+    return output;
+}
 
+const getRecentAdded = async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+        console.debug('Failed to scrape');
+    }
+
+    const html = await response.text();
+    
+    const results = parseHtml(html);
+
+    fs.writeFile('test.json', JSON.stringify(results, null, 2), (err) => { });
+    
+}
+
+const getQuery = async () => {
+    const response = await fetch(url);
 }
 
 getRecentAdded();
