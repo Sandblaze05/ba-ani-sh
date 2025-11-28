@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import LRUCacheStore from './cacheStore.js'
 import { spawn } from 'child_process';
+import wrapAnsi from 'wrap-ansi';
 import http from 'http';
 import fs from 'fs'
 import WebTorrent from 'webtorrent';
@@ -367,48 +368,83 @@ export default function App() {
     </Box>
   );
 
-  const WatchScreen = () => (
-    <Box flexDirection='column'>
-      <Text color='cyan'>{watchAscii}</Text>
+  
+
+const WatchScreen = () => {
+  // Intercept huge paste chunks
+  useEffect(() => {
+    const onData = (chunk) => {
+      const text = chunk.toString();
+
+      // Detect large paste (more than 40 chars in one chunk)
+      if (text.length > 40) {
+        setMagnetLink((prev) => prev + text.trim());
+        return;
+      }
+    };
+
+    process.stdin.on("data", onData);
+    return () => process.stdin.off("data", onData);
+  }, []);
+
+  // Make a short preview: "ABC...XYZ (length chars)"
+  const preview = magnetLink.length
+    ? `${magnetLink.slice(0, 20)}...${magnetLink.slice(-10)} (${magnetLink.length} chars)`
+    : "";
+
+  return (
+    <Box flexDirection="column">
+      <Text color="cyan">{watchAscii}</Text>
       <Text />
 
       {!showPlayerPrompt ? (
-        <Box flexDirection='column' marginY={1}>
+        <Box flexDirection="column" marginY={1}>
           <Box>
-            <Text color='cyan'>┌─[</Text>
-            <Text color='#00CCCC'> Magnet Link </Text>
-            <Text color='cyan'>]</Text>
+            <Text color="cyan">┌─[</Text>
+            <Text color="#00CCCC"> Magnet Link </Text>
+            <Text color="cyan">]</Text>
           </Box>
+
+          {/* TextInput is empty, but still used for typing */}
           <Box>
-            <Text color='cyan'>└─&gt; </Text>
+            <Text color="cyan">{'└─> '}</Text>
             <TextInput
-              value={magnetLink}
-              onChange={setMagnetLink}
-              onSubmit={(value) => {
-                if (value.trim()) {
-                  setShowPlayerPrompt(true);
+              value=""
+              onChange={(v) => {
+                if (v.length === 1) {
+                  setMagnetLink((prev) => prev + v);
                 }
               }}
-              placeholder="Enter magnet link here..."
+              onSubmit={() => {
+                if (magnetLink.trim()) setShowPlayerPrompt(true);
+              }}
+              placeholder="Paste magnet link or type..."
               focus={true}
             />
           </Box>
+
+          {/* Truncated preview */}
+          {magnetLink.length > 0 && (
+            <Box marginTop={1} marginLeft={2}>
+              <Text dimColor>Magnet: {preview}</Text>
+            </Box>
+          )}
         </Box>
       ) : (
-        <Box flexDirection='column' marginY={1}>
+        <Box flexDirection="column" marginY={1}>
           <Box>
-            <Text color='#bc5ef6ff'>┌─[</Text>
-            <Text color='#f97fc6ff'> Select Player </Text>
-            <Text color='#bc5ef6ff'>]</Text>
+            <Text color="#bc5ef6ff">┌─[</Text>
+            <Text color="#f97fc6ff"> Select Player </Text>
+            <Text color="#bc5ef6ff">]</Text>
           </Box>
           <Box>
-            <Text color='#bc5ef6ff'>└─&gt; </Text>
+            <Text color="#bc5ef6ff">{'└─> '}</Text>
             <TextInput
               value={playerChoice}
               onChange={setPlayerChoice}
               onSubmit={(value) => {
                 setShowPlayerPrompt(false);
-                handleMagnetSubmit(magnetLink, value.trim() || 'mpv');
+                handleMagnetSubmit(magnetLink, value.trim() || "mpv");
               }}
               placeholder="mpv or vlc [default: mpv]"
               focus={true}
@@ -417,31 +453,49 @@ export default function App() {
         </Box>
       )}
 
+      {/* Your existing download + status UI */}
       {statusMessage && (
         <Box marginY={1} marginLeft={2}>
-          <Text color={statusMessage.startsWith('✓') ? '#84f05dff' : statusMessage.startsWith('✗') ? 'red' : 'yellow'}>
+          <Text
+            color={
+              statusMessage.startsWith("✓")
+                ? "#84f05dff"
+                : statusMessage.startsWith("✗")
+                ? "red"
+                : "yellow"
+            }
+          >
             {statusMessage}
           </Text>
         </Box>
       )}
 
       {fileName && (
-        <Box marginLeft={2} flexDirection='column' borderColor='cyan' borderStyle='round' width='fit'>
+        <Box
+          marginLeft={2}
+          flexDirection="column"
+          borderColor="cyan"
+          borderStyle="round"
+          width="fit"
+        >
           <Box>
-            <Text color='white' bold>{'File: '}</Text><Text color='white'>{fileName}</Text>
+            <Text color="white" bold>{"File: "}</Text>
+            <Text color="white">{fileName}</Text>
           </Box>
           <Box>
-            <Text color='white' bold>{'Size: '}</Text><Text color='white'>{fileSize}</Text>
+            <Text color="white" bold>{"Size: "}</Text>
+            <Text color="white">{fileSize}</Text>
           </Box>
           <Box>
-            <Text color='white' bold>{'Player: '}</Text><Text color='white'>{playerChoice.toUpperCase()}</Text>
+            <Text color="white" bold>{"Player: "}</Text>
+            <Text color="white">{playerChoice.toUpperCase()}</Text>
           </Box>
         </Box>
       )}
 
       {isLoading && (
         <Box marginLeft={2}>
-          <Text color='#e776b9ff'>
+          <Text color="#e776b9ff">
             <Spinner /> <Text>Loading...</Text>
           </Text>
         </Box>
@@ -459,9 +513,107 @@ export default function App() {
       )}
 
       <Text />
-      <Text color='gray' dimColor>Enter magnet link and press Enter.  Press Esc to go back.</Text>
+      <Text dimColor>Paste magnet link. Press Esc to go back.</Text>
     </Box>
   );
+};
+
+
+  // const WatchScreen = () => (
+  //   <Box flexDirection='column'>
+  //     <Text color='cyan'>{watchAscii}</Text>
+  //     <Text />
+
+  //     {!showPlayerPrompt ? (
+  //       <Box flexDirection='column' marginY={1}>
+  //         <Box>
+  //           <Text color='cyan'>┌─[</Text>
+  //           <Text color='#00CCCC'> Magnet Link </Text>
+  //           <Text color='cyan'>]</Text>
+  //         </Box>
+  //         <Box>
+  //           <Text color='cyan'>└─&gt; </Text>
+  //           <TextInput
+  //             value={magnetLink}
+  //             onChange={setMagnetLink}
+  //             onSubmit={(value) => {
+  //               if (value.trim()) {
+  //                 setShowPlayerPrompt(true);
+  //               }
+  //             }}
+  //             placeholder="Enter magnet link here..."
+  //             focus={true}
+  //           />
+  //         </Box>
+  //       </Box>
+  //     ) : (
+  //       <Box flexDirection='column' marginY={1}>
+  //         <Box>
+  //           <Text color='#bc5ef6ff'>┌─[</Text>
+  //           <Text color='#f97fc6ff'> Select Player </Text>
+  //           <Text color='#bc5ef6ff'>]</Text>
+  //         </Box>
+  //         <Box>
+  //           <Text color='#bc5ef6ff'>└─&gt; </Text>
+  //           <TextInput
+  //             value={playerChoice}
+  //             onChange={setPlayerChoice}
+  //             onSubmit={(value) => {
+  //               setShowPlayerPrompt(false);
+  //               handleMagnetSubmit(magnetLink, value.trim() || 'mpv');
+  //             }}
+  //             placeholder="mpv or vlc [default: mpv]"
+  //             focus={true}
+  //           />
+  //         </Box>
+  //       </Box>
+  //     )}
+
+  //     {statusMessage && (
+  //       <Box marginY={1} marginLeft={2}>
+  //         <Text color={statusMessage.startsWith('✓') ? '#84f05dff' : statusMessage.startsWith('✗') ? 'red' : 'yellow'}>
+  //           {statusMessage}
+  //         </Text>
+  //       </Box>
+  //     )}
+
+  //     {fileName && (
+  //       <Box marginLeft={2} flexDirection='column' borderColor='cyan' borderStyle='round' width='fit'>
+  //         <Box>
+  //           <Text color='white' bold>{'File: '}</Text><Text color='white'>{fileName}</Text>
+  //         </Box>
+  //         <Box>
+  //           <Text color='white' bold>{'Size: '}</Text><Text color='white'>{fileSize}</Text>
+  //         </Box>
+  //         <Box>
+  //           <Text color='white' bold>{'Player: '}</Text><Text color='white'>{playerChoice.toUpperCase()}</Text>
+  //         </Box>
+  //       </Box>
+  //     )}
+
+  //     {isLoading && (
+  //       <Box marginLeft={2}>
+  //         <Text color='#e776b9ff'>
+  //           <Spinner /> <Text>Loading...</Text>
+  //         </Text>
+  //       </Box>
+  //     )}
+
+  //     {downloadProgress > 0 && (
+  //       <Box marginLeft={2} marginTop={1}>
+  //         <ProgressBar
+  //           progress={downloadProgress}
+  //           speed={downloadSpeed}
+  //           downloaded={downloaded}
+  //           total={totalSize}
+  //         />
+  //       </Box>
+  //     )}
+
+  //     <Text />
+  //     <Text color='gray' dimColor>Enter magnet link and press Enter.  Press Esc to go back.</Text>
+  //   </Box>
+  // );
 
   return (
     <>
