@@ -65,7 +65,6 @@ export default class LRUCacheStore {
 
         // Sliding Window Strategy:
         // Sort chunks by distance from lastAccessedIndex (descending).
-        // We evict the chunks that are furthest away from the current playback position.
         const sortedChunks = Array.from(this.chunks).sort((a, b) => {
             const distA = Math.abs(a - this.lastAccessedIndex);
             const distB = Math.abs(b - this.lastAccessedIndex);

@@ -10,15 +10,26 @@ const cli = meow(
 		  $ ba-ani-sh
 
 		Options
-			--name  Your name
-
+			--play, -p		Magnet link to play directly
+			--player		Player to use (mpv, vlc) [Default: mpv]
+			Note: Player command should be in PATH
+		
 		Examples
-		  $ ba-ani-sh --name=Jane
-		  Hello, Jane
+		  $ ba-ani-sh --play "magnet:?xt=urn:btih:..." --player vlc
 	`,
 	{
 		importMeta: import.meta,
+		flags: {
+			play: {
+				type: 'string',
+				shortFlag: 'p',
+			},
+			player: {
+				type: 'string',
+				default: 'mpv',
+			}
+		}
 	},
 );
 
-render(<App name={cli.flags.name} />);
+render(<App play={cli.flags.play} player={cli.flags.player} />);
